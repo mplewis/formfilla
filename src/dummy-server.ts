@@ -13,7 +13,7 @@ app.get("/", (_req, res) => {
 
 app.post("/", (req, res) => {
   console.log("Form submission:", req.body);
-  res.status(201).send();
+  res.type("text/plain").send("Thanks for your suggestion!");
 });
 
 app.listen(port, () => {

@@ -7,7 +7,8 @@ import { LLMInterface } from "llm-interface";
 import { createHash } from "crypto";
 import { z } from "zod";
 
-const cacheDir = "tmp/cache";
+const cacheDir = join("tmp", "cache");
+const submissionDir = join("tmp", "submissions");
 const fillableFieldTypes = [
   "email",
   "password",
@@ -92,23 +93,35 @@ async function submitForm(
   url: string,
   fields: { name: string; value: string }[]
 ) {
+  const unixEpoch = Date.now();
   const browser = await puppeteer.launch();
   const page = await browser.newPage();
+
+  await mkdir(submissionDir, { recursive: true });
+
   try {
     await page.goto(url);
 
-    console.log("Filling fields with provided data");
+    console.log("Filling the form and taking a screenshot");
     await fillFields(page, fields);
+    await writeFile(
+      join(submissionDir, `${unixEpoch}_data.json`),
+      JSON.stringify(fields, null, 2)
+    );
+    await page.screenshot({
+      path: join(submissionDir, `${unixEpoch}_form.png`),
+      fullPage: true,
+    });
 
     console.log("Submitting the form");
     await page.$eval("form", (form) => form.submit());
-
-    console.log("Waiting for navigation after form submission");
     await page.waitForNavigation();
 
-    console.log("Taking a screenshot after form submission");
-    const unixEpoch = (Date.now() / 1000).toFixed(0);
-    await page.screenshot({ path: `tmp/${unixEpoch}.png`, fullPage: true });
+    console.log("Taking a screenshot after submitting the form");
+    await page.screenshot({
+      path: join(submissionDir, `${unixEpoch}_resp.png`),
+      fullPage: true,
+    });
   } finally {
     await browser.close();
   }
@@ -168,7 +181,10 @@ async function main() {
   const llmResponsesPreValidate = JSON.parse(rawJSON);
   const llmResponses = responsesSchema.parse(llmResponsesPreValidate);
 
-  for (const resp of llmResponses) await submitForm(url, resp);
+  for (const [idx, resp] of llmResponses.entries()) {
+    console.log(`Submitting form ${idx + 1} of ${llmResponses.length}`);
+    await submitForm(url, resp);
+  }
 }
 
 main();

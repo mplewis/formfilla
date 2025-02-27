@@ -12,13 +12,17 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "handlebars": "^4.7.8",
     "jsdom": "^26.0.0",
+    "llm-interface": "^2.0.1495",
     "puppeteer": "^24.3.0",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/body-parser": "^1.19.5",
     "@types/express": "^5.0.0",
-    "@types/jsdom": "^21.1.7"
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.13.5"
   }
 }

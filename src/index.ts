@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { compile } from "handlebars";
 import { LLMInterface } from "llm-interface";
 import { createHash } from "crypto";
-import { existsSync } from "fs";
+import { z } from "zod";
 
 const cacheDir = "tmp/cache";
 const fillableFieldTypes = [
@@ -16,6 +16,10 @@ const fillableFieldTypes = [
   "textarea",
   "url",
 ];
+
+const fieldSchema = z.object({ name: z.string(), value: z.string() });
+const responseSchema = z.array(fieldSchema);
+const responsesSchema = z.array(responseSchema);
 
 function mustEnv(k: string): string {
   const v = process.env[k];
@@ -49,17 +53,15 @@ function parseFormFields(html: string): any[] {
   });
 }
 
-function fillField(page: Page, name: string, value: string) {
-  return page.evaluate(
-    (name, value) => {
-      const input = document.querySelector(`[name="${name}"]`);
+function fillFields(page: Page, fields: { name: string; value: string }[]) {
+  return page.evaluate((fields) => {
+    for (const field of fields) {
+      const input = document.querySelector(`[name="${field.name}"]`);
       if (input && "value" in input) {
-        input.value = value;
+        input.value = field.value;
       }
-    },
-    name,
-    value
-  );
+    }
+  }, fields);
 }
 
 async function queryLLM(
@@ -83,6 +85,32 @@ async function queryLLM(
     const { results } = response;
     await writeFile(path, results, "utf-8");
     return results;
+  }
+}
+
+async function submitForm(
+  url: string,
+  fields: { name: string; value: string }[]
+) {
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
+  try {
+    await page.goto(url);
+
+    console.log("Filling fields with provided data");
+    await fillFields(page, fields);
+
+    console.log("Submitting the form");
+    await page.$eval("form", (form) => form.submit());
+
+    console.log("Waiting for navigation after form submission");
+    await page.waitForNavigation();
+
+    console.log("Taking a screenshot after form submission");
+    const unixEpoch = (Date.now() / 1000).toFixed(0);
+    await page.screenshot({ path: `tmp/${unixEpoch}.png`, fullPage: true });
+  } finally {
+    await browser.close();
   }
 }
 
@@ -110,6 +138,7 @@ async function main() {
   } else {
     throw new Error("No form found on the page");
   }
+  await browser.close();
 
   console.log("Parse the form fields using jsdom");
 
@@ -120,10 +149,6 @@ async function main() {
     fillableFieldTypes.includes(field.type)
   );
   console.log("Fields to fill:", toFill);
-
-  for (const field of toFill) {
-    if (field.type === "text") await fillField(page, field.name, "hello world");
-  }
 
   console.log("Build prompt for LLM");
   const prompt = promptTmpl({
@@ -136,10 +161,14 @@ async function main() {
   const response = await queryLLM(llm, apiKey, prompt);
   console.log("Response:", response);
 
-  console.log("Take a screenshot of the whole page and save it to a file");
-  await page.screenshot({ path: "tmp/screenshot.png", fullPage: true });
+  const rawJSON = response
+    .split("\n")
+    .filter((line) => !line.startsWith("```"))
+    .join("\n");
+  const llmResponsesPreValidate = JSON.parse(rawJSON);
+  const llmResponses = responsesSchema.parse(llmResponsesPreValidate);
 
-  await browser.close();
+  for (const resp of llmResponses) await submitForm(url, resp);
 }
 
 main();

@@ -1,35 +1,92 @@
-import puppeteer from "puppeteer";
+import puppeteer, { Page } from "puppeteer";
+import { JSDOM } from "jsdom";
+
+const fillableFieldTypes = [
+  "email",
+  "password",
+  "tel",
+  "text",
+  "textarea",
+  "url",
+];
+
+function mustEnv(k: string): string {
+  const v = process.env[k];
+  if (!v) throw new Error(`${k} is unset`);
+  return v;
+}
+
+function parseFormFields(html: string): any[] {
+  const dom = new JSDOM(html);
+  const formElement = dom.window.document.querySelector("form");
+  if (!formElement) throw new Error("No form element found in the parsed HTML");
+  return Array.from(formElement.elements).map((element: any) => {
+    let label = "";
+    if (element.id) {
+      const labelElement = formElement.querySelector(
+        `label[for="${element.id}"]`
+      );
+      if (labelElement) {
+        label = labelElement.textContent || "";
+      }
+    }
+
+    const { name, type, value } = element;
+    return { name, type, value, label };
+  });
+}
+
+function fillField(page: Page, name: string, value: string) {
+  return page.evaluate(
+    (name, value) => {
+      const input = document.querySelector(`[name="${name}"]`);
+      if (input && "value" in input) {
+        input.value = value;
+      }
+    },
+    name,
+    value
+  );
+}
 
 async function main() {
-	console.log("Launch the browser and open a new blank page");
-	const browser = await puppeteer.launch();
-	const page = await browser.newPage();
+  const url = mustEnv("TARGET_URL");
 
-	console.log("Navigate the page to a URL.");
-	await page.goto("https://developer.chrome.com/");
+  console.log("Launch the browser and open a new blank page");
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
 
-	console.log("Set screen size.");
-	await page.setViewport({ width: 1080, height: 1024 });
+  console.log(`Navigate the page to ${url}`);
+  await page.goto(url);
 
-	console.log("Type into search box.");
-	await page.locator(".devsite-search-field").fill("automate beyond recorder");
+  console.log("Parse the first <form> element on the page");
+  const form = await page.$("form");
+  let formHtml: string;
+  if (form) {
+    formHtml = await page.evaluate((form) => form.outerHTML, form);
+    console.log("Form HTML:", formHtml);
+  } else {
+    throw new Error("No form found on the page");
+  }
 
-	console.log(" and click on first result.");
-	await page.locator(".devsite-result-item-link").click();
+  console.log("Parse the form fields using jsdom");
 
-	console.log("Locate the full title with a unique string.");
-	const textSelector = await page
-		.locator("text/Customize and automate")
-		.waitHandle();
-	const fullTitle = await textSelector?.evaluate((el) => el.textContent);
+  const fields = parseFormFields(formHtml);
+  console.log("Form fields:", fields);
 
-	console.log("Print the full title.");
-	console.log('The title of this blog post is "%s".', fullTitle);
+  const toFill = fields.filter((field) =>
+    fillableFieldTypes.includes(field.type)
+  );
+  console.log("Fields to fill:", toFill);
 
-	console.log("Take a screenshot and save it to a file.");
-	await page.screenshot({ path: "tmp/screenshot.png" });
+  for (const field of toFill) {
+    if (field.type === "text") await fillField(page, field.name, "hello world");
+  }
 
-	await browser.close();
+  console.log("Take a screenshot of the whole page and save it to a file");
+  await page.screenshot({ path: "tmp/screenshot.png", fullPage: true });
+
+  await browser.close();
 }
 
 main();
